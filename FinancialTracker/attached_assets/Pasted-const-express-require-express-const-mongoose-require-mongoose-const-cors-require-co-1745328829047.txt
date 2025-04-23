@@ -1,0 +1,186 @@
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+mongoose.connect('mongodb://localhost:27017/financeApp');
+
+const User = mongoose.model('User', new mongoose.Schema({
+  name: String,
+  email: { type: String, unique: true },
+  password: String,
+  createdAt: { type: Date, default: Date.now }
+}));
+
+const Notification = mongoose.model('Notification', new mongoose.Schema({
+  userId: mongoose.Schema.Types.ObjectId,
+  message: String,
+  read: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now }
+}));
+
+const Expense = mongoose.model('Expense', new mongoose.Schema({
+  userId: mongoose.Schema.Types.ObjectId,
+  title: String,
+  amount: Number,
+  category: String,
+  date: Date,
+  note: String,
+  recurring: { type: Boolean, default: false }
+}));
+
+const Budget = mongoose.model('Budget', new mongoose.Schema({
+  userId: mongoose.Schema.Types.ObjectId,
+  category: String,
+  amount: Number
+}));
+
+const Goal = mongoose.model('Goal', new mongoose.Schema({
+  userId: mongoose.Schema.Types.ObjectId,
+  title: String,
+  targetAmount: Number,
+  currentAmount: { type: Number, default: 0 },
+  deadline: Date
+}));
+
+const Income = mongoose.model('Income', new mongoose.Schema({
+  userId: mongoose.Schema.Types.ObjectId,
+  source: String,
+  amount: Number,
+  date: Date
+}));
+
+const Category = mongoose.model('Category', new mongoose.Schema({
+  userId: mongoose.Schema.Types.ObjectId,
+  name: String
+}));
+
+app.post('/api/register', async (req, res) => {
+  const { name, email, password } = req.body;
+  const user = new User({ name, email, password });
+  await user.save();
+  res.status(201).send(user);
+});
+
+app.get('/api/notifications/:userId', async (req, res) => {
+  const notifications = await Notification.find({ userId: req.params.userId });
+  res.send(notifications);
+});
+
+app.post('/api/expenses', async (req, res) => {
+  const expense = new Expense(req.body);
+  await expense.save();
+  res.status(201).send(expense);
+});
+
+app.get('/api/expenses/:userId', async (req, res) => {
+  const expenses = await Expense.find({ userId: req.params.userId });
+  res.send(expenses);
+});
+
+app.post('/api/budgets', async (req, res) => {
+  const budget = new Budget(req.body);
+  await budget.save();
+  res.status(201).send(budget);
+});
+
+app.get('/api/budgets/:userId', async (req, res) => {
+  const budgets = await Budget.find({ userId: req.params.userId });
+  res.send(budgets);
+});
+
+app.post('/api/goals', async (req, res) => {
+  const goal = new Goal(req.body);
+  await goal.save();
+  res.status(201).send(goal);
+});
+
+app.get('/api/goals/:userId', async (req, res) => {
+  const goals = await Goal.find({ userId: req.params.userId });
+  res.send(goals);
+});
+
+app.post('/api/income', async (req, res) => {
+  const income = new Income(req.body);
+  await income.save();
+  res.status(201).send(income);
+});
+
+app.get('/api/income/:userId', async (req, res) => {
+  const incomes = await Income.find({ userId: req.params.userId });
+  res.send(incomes);
+});
+
+app.post('/api/categories', async (req, res) => {
+  const category = new Category(req.body);
+  await category.save();
+  res.status(201).send(category);
+});
+
+app.get('/api/categories/:userId', async (req, res) => {
+  const categories = await Category.find({ userId: req.params.userId });
+  res.send(categories);
+});
+
+app.get('/api/reports/:userId', async (req, res) => {
+  const expenses = await Expense.find({ userId: req.params.userId });
+  const report = expenses.reduce((acc, exp) => {
+    acc.total += exp.amount;
+    acc.byCategory[exp.category] = (acc.byCategory[exp.category] || 0) + exp.amount;
+    return acc;
+  }, { total: 0, byCategory: {} });
+
+  res.send(report);
+});
+
+app.get('/api/download-report/:userId', async (req, res) => {
+  const expenses = await Expense.find({ userId: req.params.userId });
+  const csv = expenses.map(e => `${e.date},${e.title},${e.category},${e.amount}`).join('\n');
+  res.setHeader('Content-Disposition', 'attachment; filename=report.csv');
+  res.setHeader('Content-Type', 'text/csv');
+  res.send(csv);
+});
+
+app.post('/api/backup', async (req, res) => {
+  const userId = req.body.userId;
+  const data = {
+    expenses: await Expense.find({ userId }),
+    income: await Income.find({ userId }),
+    budgets: await Budget.find({ userId }),
+    goals: await Goal.find({ userId }),
+    categories: await Category.find({ userId })
+  };
+  res.send(data);
+});
+
+app.post('/api/restore', async (req, res) => {
+  const { userId, data } = req.body;
+  await Expense.insertMany(data.expenses.map(d => ({ ...d, userId })));
+  await Income.insertMany(data.income.map(d => ({ ...d, userId })));
+  await Budget.insertMany(data.budgets.map(d => ({ ...d, userId })));
+  await Goal.insertMany(data.goals.map(d => ({ ...d, userId })));
+  await Category.insertMany(data.categories.map(d => ({ ...d, userId })));
+  res.send({ message: 'Restore completed' });
+});
+
+app.listen(5000, () => console.log('Server running on port 5000'));
+
+function generateInsights(transactions) {
+  let totalSpent = 0;
+  let categoryMap = {};
+
+  transactions.forEach(tx => {
+    totalSpent += tx.amount;
+    categoryMap[tx.category] = (categoryMap[tx.category] || 0) + tx.amount;
+  });
+
+  return {
+    totalSpent,
+    topCategories: Object.entries(categoryMap).map(([category, value]) => ({ category, value }))
+  };
+}
+
+module.exports = generateInsights;
